@@ -1943,15 +1943,20 @@ print_tunnel_rule(char *svc_name, char *dname, ipvs_dest_entry_t *e)
 }
 
 static void
-print_service_entry(ipvs_service_entry_t *se, unsigned int format)
+print_service_entry(ipvs_service_entry_t *se, unsigned int format, struct ip_vs_dest_entry *dests)
 {
-	struct ip_vs_get_dests *d;
+	struct ip_vs_get_dests *d = NULL;
 	char svc_name[1024];
 	int i;
+	int num_dests = se->num_dests;
 
-	if (!(d = ipvs_get_dests(se))) {
-		fprintf(stderr, "%s\n", ipvs_strerror(errno));
-		exit(1);
+	if (!dests) {
+		if (!(d = ipvs_get_dests(se))) {
+			fprintf(stderr, "%s\n", ipvs_strerror(errno));
+			exit(1);
+		}
+		num_dests = d->num_dests;
+		dests = d->entrytable;
 	}
 
 	if (se->fwmark) {
@@ -2058,11 +2063,11 @@ print_service_entry(ipvs_service_entry_t *se, unsigned int format)
 
 	/* print all the destination entries */
 	if (!(format & FMT_NOSORT))
-		ipvs_sort_dests(d, ipvs_cmp_dests);
+		ipvs_sort_dests_entries(dests, num_dests, ipvs_cmp_dests);
 
-	for (i = 0; i < d->num_dests; i++) {
+	for (i = 0; i < num_dests; i++) {
 		char *dname;
-		ipvs_dest_entry_t *e = &d->entrytable[i];
+		ipvs_dest_entry_t *e = &dests[i];
 		unsigned int fwd_method = e->conn_flags & IP_VS_CONN_F_FWD_MASK;
 
 		if (!(dname = addrport_to_anyname(e->af, &(e->addr), ntohs(e->port),
@@ -2122,7 +2127,8 @@ print_service_entry(ipvs_service_entry_t *se, unsigned int format)
 			       e->weight, e->activeconns, e->inactconns);
 		free(dname);
 	}
-	free(d);
+	if (d)
+		free(d);
 }
 
 
@@ -2137,23 +2143,17 @@ static void list_service(ipvs_service_t *svc, unsigned int format)
 	}
 
 	print_title(format);
-	print_service_entry(entry, format);
+	print_service_entry(entry, format, NULL);
 	free(entry);
 }
 
-
-static void list_all(unsigned int format)
+static int slow_list_all(unsigned int format)
 {
 	struct ip_vs_get_services *get;
 	int i;
 
-	if (!(format & FMT_RULE))
-		printf("IP Virtual Server version %d.%d.%d (size=%d)\n",
-		       NVERSION(ipvs_info.version), ipvs_info.size);
-
 	if (!(get = ipvs_get_services())) {
-		fprintf(stderr, "%s\n", ipvs_strerror(errno));
-		exit(1);
+		return -1;
 	}
 
 	if (!(format & FMT_NOSORT))
@@ -2161,8 +2161,51 @@ static void list_all(unsigned int format)
 
 	print_title(format);
 	for (i = 0; i < get->num_services; i++)
-		print_service_entry(&get->entrytable[i], format);
+		print_service_entry(&get->entrytable[i], format, NULL);
 	free(get);
+
+	return 0;
+}
+
+static int fast_list_all(unsigned int format)
+{
+	struct ip_vs_get_services_dests *get;
+	struct services_dests_index *idx;
+	int i;
+
+	if (!(get = ipvs_get_services_dests())) {
+		return -1;
+	}
+
+	if (!(format & FMT_NOSORT))
+		ipvs_sort_services_index(get, ipvs_cmp_services);
+
+	print_title(format);
+	for (i = 0; i < get->services->num_services; i++) {
+		idx = &get->index[i];
+		print_service_entry(&(get->services->entrytable[idx->svc_idx]),
+				    format,
+				    &(get->dests->entrytable[idx->dest_idx]));
+	}
+	free_services_dests(get);
+
+	return 0;
+}
+
+static void list_all(unsigned int format)
+{
+	if (!(format & FMT_RULE))
+		printf("IP Virtual Server version %d.%d.%d (size=%d)\n",
+		       NVERSION(ipvs_info.version), ipvs_info.size);
+
+	if (!fast_list_all(format))
+		return;
+
+	if (!slow_list_all(format))
+		return;
+
+	fprintf(stderr, "%s\n", ipvs_strerror(errno));
+	exit(1);
 }
 
 

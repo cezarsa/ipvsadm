@@ -677,18 +677,13 @@ static int ipvs_parse_stats64(struct ip_vs_stats64 *stats, struct nlattr *nla)
 	return 0;
 }
 
-static int ipvs_services_parse_cb(struct nl_msg *msg, void *arg)
+static int ipvs_services_parse_entry(struct ip_vs_get_services **getp,
+				     struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1])
 {
-	struct nlmsghdr *nlh = nlmsg_hdr(msg);
-	struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1];
 	struct nlattr *svc_attrs[IPVS_SVC_ATTR_MAX + 1];
-	struct ip_vs_get_services **getp = (struct ip_vs_get_services **)arg;
 	struct ip_vs_get_services *get = (struct ip_vs_get_services *)*getp;
 	struct ip_vs_flags flags;
 	int i = get->num_services;
-
-	if (genlmsg_parse(nlh, 0, attrs, IPVS_CMD_ATTR_MAX, ipvs_cmd_policy) != 0)
-		return -1;
 
 	if (!attrs[IPVS_CMD_ATTR_SERVICE])
 		return -1;
@@ -752,6 +747,21 @@ static int ipvs_services_parse_cb(struct nl_msg *msg, void *arg)
 	get = realloc(get, sizeof(*get)
 	      + sizeof(ipvs_service_entry_t) * (get->num_services + 1));
 	*getp = get;
+	return 0;
+}
+
+static int ipvs_services_parse_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct ip_vs_get_services **getp = (struct ip_vs_get_services **)arg;
+	struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1];
+
+	if (genlmsg_parse(nlh, 0, attrs, IPVS_CMD_ATTR_MAX, ipvs_cmd_policy) != 0)
+		return -1;
+
+	if (ipvs_services_parse_entry(getp, attrs))
+		return -1;
+
 	return 0;
 }
 #endif
@@ -852,22 +862,40 @@ ipvs_sort_services(struct ip_vs_get_services *s, ipvs_service_cmp_t f)
 	      sizeof(ipvs_service_entry_t), (qsort_cmp_t)f);
 }
 
-#ifdef LIBIPVS_USE_NL
-static int ipvs_dests_parse_cb(struct nl_msg *msg, void *arg)
+static struct sort_services_index_args {
+	struct ip_vs_get_services_dests	*s;
+	ipvs_service_cmp_t		cmp;
+} sort_args;
+
+static int
+ipvs_cmp_services_index(struct services_dests_index *a, struct services_dests_index *b)
 {
-	struct nlmsghdr *nlh = nlmsg_hdr(msg);
-	struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1];
+	return sort_args.cmp(&(sort_args.s->services->entrytable[a->svc_idx]),
+			     &(sort_args.s->services->entrytable[b->svc_idx]));
+}
+
+void
+ipvs_sort_services_index(struct ip_vs_get_services_dests *s,
+			 ipvs_service_cmp_t f)
+{
+	sort_args.s = s;
+	sort_args.cmp = f;
+	qsort(s->index, s->services->num_services,
+	      sizeof(struct services_dests_index), (qsort_cmp_t)ipvs_cmp_services_index);
+}
+
+#ifdef LIBIPVS_USE_NL
+static int ipvs_dests_parse_entry(struct ip_vs_get_dests **dp,
+				  struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1],
+				  u_int16_t svc_af)
+{
 	struct nlattr *dest_attrs[IPVS_DEST_ATTR_MAX + 1];
 	struct nlattr *attr_addr_family = NULL;
 	struct nlattr *attr_tun_type = NULL;
 	struct nlattr *attr_tun_port = NULL;
 	struct nlattr *attr_tun_flags = NULL;
-	struct ip_vs_get_dests **dp = (struct ip_vs_get_dests **)arg;
 	struct ip_vs_get_dests *d = (struct ip_vs_get_dests *)*dp;
 	int i = d->num_dests;
-
-	if (genlmsg_parse(nlh, 0, attrs, IPVS_CMD_ATTR_MAX, ipvs_cmd_policy) != 0)
-		return -1;
 
 	if (!attrs[IPVS_CMD_ATTR_DEST])
 		return -1;
@@ -912,7 +940,7 @@ static int ipvs_dests_parse_cb(struct nl_msg *msg, void *arg)
 	if (attr_addr_family)
 		d->entrytable[i].af = nla_get_u16(attr_addr_family);
 	else
-		d->entrytable[i].af = d->af;
+		d->entrytable[i].af = svc_af;
 
 	if (dest_attrs[IPVS_DEST_ATTR_STATS64]) {
 		if (ipvs_parse_stats(&d->entrytable[i].stats64,
@@ -930,6 +958,57 @@ static int ipvs_dests_parse_cb(struct nl_msg *msg, void *arg)
 	d = realloc(d, sizeof(*d) + sizeof(ipvs_dest_entry_t) * (d->num_dests + 1));
 	*dp = d;
 	return 0;
+}
+
+static int ipvs_dests_parse_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1];
+	struct ip_vs_get_dests **dp = (struct ip_vs_get_dests **)arg;
+	struct ip_vs_get_dests *d = (struct ip_vs_get_dests *)*dp;
+
+	if (genlmsg_parse(nlh, 0, attrs, IPVS_CMD_ATTR_MAX, ipvs_cmd_policy) != 0)
+		return -1;
+
+	if (ipvs_dests_parse_entry(dp, attrs, d->af) != 0)
+		return -1;
+
+	return 0;
+}
+
+static int ipvs_services_dests_parse_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct nlattr *attrs[IPVS_CMD_ATTR_MAX + 1];
+	struct ip_vs_get_services_dests **getp = (struct ip_vs_get_services_dests **)arg;
+	struct ip_vs_get_services_dests *get = (struct ip_vs_get_services_dests *)*getp;
+	int i = get->services->num_services;
+
+	if (genlmsg_parse(nlh, 0, attrs, IPVS_CMD_ATTR_MAX, ipvs_cmd_policy) != 0)
+		return -1;
+
+	if (attrs[IPVS_CMD_ATTR_SERVICE]) {
+		get->index[i].svc_idx = i;
+		get->index[i].dest_idx = get->dests->num_dests;
+
+		if (ipvs_services_parse_entry(&(get->services), attrs) != 0)
+			return -1;
+
+		get->index = realloc(get->index, sizeof(*(get->index)) * (get->services->num_services + 1));
+		return 0;
+	}
+
+	if (attrs[IPVS_CMD_ATTR_DEST] && i > 0) {
+		struct ip_vs_service_entry *svc = &(get->services->entrytable[i-1]);
+
+		if (ipvs_dests_parse_entry(&(get->dests), attrs, svc->af) != 0)
+			return -1;
+
+		svc->num_dests++;
+		return 0;
+	}
+
+	return -1;
 }
 #endif
 
@@ -1031,6 +1110,61 @@ ipvs_nl_dest_failure:
 	return d;
 }
 
+void free_services_dests(struct ip_vs_get_services_dests *get)
+{
+	free(get->dests);
+	free(get->services);
+	free(get->index);
+	free(get);
+}
+
+struct ip_vs_get_services_dests *ipvs_get_services_dests(void)
+{
+	struct ip_vs_get_services_dests *get;
+	struct nl_msg *msg;
+	socklen_t svc_len, dst_len;
+
+#ifndef LIBIPVS_USE_NL
+	return NULL;
+#endif
+	if (!try_nl)
+		return NULL;
+
+	if (!(get = malloc(sizeof(*get))))
+		return NULL;
+
+	if (!(get->index = malloc(sizeof(*(get->index))))) {
+		free(get);
+		return NULL;
+	}
+
+	svc_len = sizeof(*(get->services)) +
+		  sizeof(ipvs_service_entry_t);
+	if (!(get->services = malloc(svc_len))) {
+		free(get->index);
+		free(get);
+		return NULL;
+	}
+
+	dst_len = sizeof(*(get->dests)) +
+		  sizeof(ipvs_dest_entry_t);
+	if (!(get->dests = malloc(dst_len))) {
+		free(get->services);
+		free(get->index);
+		free(get);
+		return NULL;
+	}
+
+	get->services->num_services = 0;
+	get->dests->num_dests = 0;
+
+	msg = ipvs_nl_message(IPVS_CMD_GET_SERVICE_DEST, NLM_F_DUMP);
+	if (msg && (ipvs_nl_send_message(msg, ipvs_services_dests_parse_cb, &get) == 0))
+		return get;
+
+	free_services_dests(get);
+	return NULL;
+}
 
 int ipvs_cmp_dests(ipvs_dest_entry_t *d1, ipvs_dest_entry_t *d2)
 {
@@ -1048,11 +1182,15 @@ int ipvs_cmp_dests(ipvs_dest_entry_t *d1, ipvs_dest_entry_t *d2)
 	return ntohs(d1->port) - ntohs(d2->port);
 }
 
+void ipvs_sort_dests_entries(ipvs_dest_entry_t *entries, int num_entries, ipvs_dest_cmp_t f)
+{
+	qsort(entries, num_entries,
+	      sizeof(ipvs_dest_entry_t), (qsort_cmp_t)f);
+}
 
 void ipvs_sort_dests(struct ip_vs_get_dests *d, ipvs_dest_cmp_t f)
 {
-	qsort(d->entrytable, d->num_dests,
-	      sizeof(ipvs_dest_entry_t), (qsort_cmp_t)f);
+	ipvs_sort_dests_entries(d->entrytable, d->num_dests, f);
 }
 
 

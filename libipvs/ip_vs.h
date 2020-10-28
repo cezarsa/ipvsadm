@@ -378,6 +378,17 @@ struct ip_vs_get_services {
 	struct ip_vs_service_entry entrytable[0];
 };
 
+struct services_dests_index {
+	int	svc_idx;
+	int	dest_idx;
+};
+
+struct ip_vs_get_services_dests {
+	struct services_dests_index	*index;
+	struct ip_vs_get_services	*services;
+	struct ip_vs_get_dests		*dests;
+};
+
 struct ip_vs_get_services_kern {
 	/* number of virtual services */
 	unsigned int		num_services;
@@ -475,6 +486,8 @@ enum {
 
 	IPVS_CMD_ZERO,			/* zero all counters and stats */
 	IPVS_CMD_FLUSH,			/* flush services and dests */
+
+	IPVS_CMD_GET_SERVICE_DEST,	/* get info about service and destinations */
 
 	__IPVS_CMD_MAX,
 };

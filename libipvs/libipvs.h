@@ -91,6 +91,12 @@ extern int ipvs_stop_daemon(ipvs_daemon_t *dm);
 /* get all the ipvs services */
 extern struct ip_vs_get_services *ipvs_get_services(void);
 
+/* get all the ipvs services with destinations */
+extern struct ip_vs_get_services_dests *ipvs_get_services_dests(void);
+
+/* free buffers allocated by ipvs_get_services_dests() */
+extern void free_services_dests(struct ip_vs_get_services_dests *);
+
 /* sort the service entries */
 typedef int (*ipvs_service_cmp_t)(ipvs_service_entry_t *,
 				  ipvs_service_entry_t *);
@@ -98,6 +104,8 @@ extern int ipvs_cmp_services(ipvs_service_entry_t *s1,
 			     ipvs_service_entry_t *s2);
 extern void ipvs_sort_services(struct ip_vs_get_services *s,
 			       ipvs_service_cmp_t f);
+extern void ipvs_sort_services_index(struct ip_vs_get_services_dests *s,
+				     ipvs_service_cmp_t f);
 
 /* get the destination array of the specified service */
 extern struct ip_vs_get_dests *ipvs_get_dests(ipvs_service_entry_t *svc);
@@ -109,6 +117,9 @@ extern int ipvs_cmp_dests(ipvs_dest_entry_t *d1,
 			  ipvs_dest_entry_t *d2);
 extern void ipvs_sort_dests(struct ip_vs_get_dests *d,
 			    ipvs_dest_cmp_t f);
+extern void ipvs_sort_dests_entries(ipvs_dest_entry_t *entries,
+				    int num_entries,
+				    ipvs_dest_cmp_t f);
 
 /* get an ipvs service entry */
 extern ipvs_service_entry_t *
