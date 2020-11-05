@@ -532,10 +532,22 @@ enum {
 
 	IPVS_SVC_ATTR_STATS64,		/* nested attribute for service stats */
 
+	IPVS_SVC_ATTR_DESTS,		/* nested destinations */
+
 	__IPVS_SVC_ATTR_MAX,
 };
 
 #define IPVS_SVC_ATTR_MAX (__IPVS_SVC_ATTR_MAX - 1)
+
+enum {
+	IPVS_DESTS_ATTR_UNSPEC = 0,
+
+	IPVS_DESTS_ATTR_DEST,	/* nested destination */
+
+	__IPVS_DESTS_ATTR_MAX,
+};
+
+#define IPVS_DESTS_ATTR_MAX (__IPVS_DESTS_ATTR_MAX - 1)
 
 /*
  * Attributes used to describe a destination (real server)
